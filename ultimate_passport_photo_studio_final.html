@@ -1,0 +1,301 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ultimate Passport Photo Studio</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+<style>
+body{font-family:Arial;background:#eef2f5;margin:10px}
+.panel{background:#fff;padding:12px;border-radius:10px;margin-bottom:10px}
+label{font-size:13px;margin-top:6px;display:block}
+input,select,button{width:100%;padding:8px;margin-top:4px;font-size:14px}
+#images{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px}
+.thumb{border:1px solid #ccc;padding:8px;border-radius:8px;background:#fafafa;width:180px}
+.thumb img{width:160px;height:190px;object-fit:cover;margin-bottom:6px}
+canvas{background:white;border:1px solid #ccc;width:100%;height:auto}
+</style>
+</head>
+
+<body>
+
+<h2>Ultimate Passport Photo Studio</h2>
+
+<div class="panel">
+<label>Upload Images</label>
+<input type="file" id="upload" multiple accept="image/*">
+<div id="images"></div>
+</div>
+
+<div class="panel">
+<label>Default Width (mm)</label>
+<input type="number" id="defaultW" value="35">
+
+<label>Default Height (mm)</label>
+<input type="number" id="defaultH" value="45">
+
+<label>Paper Size</label>
+<select id="paper">
+<option value="a4">A4</option>
+<option value="a5">A5</option>
+<option value="letter">Letter</option>
+<option value="4x6">4x6 Photo</option>
+<option value="5x7">5x7 Photo</option>
+</select>
+
+<label>Spacing (mm)</label>
+<input type="number" id="space" value="3">
+
+<label>Background Removal Strength</label>
+<input type="range" id="bg" min="0" max="255" value="240">
+
+<label>Brightness</label>
+<input type="range" id="bright" min="-100" max="100" value="0">
+
+<label>Contrast</label>
+<input type="range" id="contrast" min="-100" max="100" value="0">
+</div>
+
+<div class="panel">
+<button onclick="generate()">Generate Layout</button>
+<button onclick="downloadPNG()">Download PNG</button>
+<button onclick="downloadPDF()">Download PDF</button>
+</div>
+
+<div class="panel">
+<canvas id="canvas"></canvas>
+</div>
+
+<script>
+
+const dpi=300;
+const mmToPx=(mm)=>Math.round(mm/25.4*dpi);
+
+let images=[];
+
+document.getElementById("upload").addEventListener("change",function(e){
+
+ for(let file of e.target.files){
+
+  const reader=new FileReader();
+
+  reader.onload=function(ev){
+
+   const img=new Image();
+
+   img.onload=function(){
+
+    const index=images.length;
+
+    images.push(img);
+
+    const div=document.createElement("div");
+    div.className="thumb";
+    div.id="block_"+index;
+
+    div.innerHTML=`
+    <img src="${img.src}">
+
+    <label>Copies</label>
+    <input id="copies_${index}" type="number" value="1" min="1">
+
+    <label>Mode</label>
+    <select id="mode_${index}">
+      <option value="color">Color</option>
+      <option value="bw">Black & White</option>
+    </select>
+
+    <label>Width mm</label>
+    <input id="width_${index}" type="number" placeholder="default">
+
+    <label>Height mm</label>
+    <input id="height_${index}" type="number" placeholder="default">
+    `;
+
+    document.getElementById("images").appendChild(div);
+
+   }
+
+   img.src=ev.target.result;
+
+  }
+
+  reader.readAsDataURL(file);
+
+ }
+
+});
+
+
+function removeBackground(ctx,x,y,w,h,strength){
+
+ let imgData=ctx.getImageData(x,y,w,h);
+ let d=imgData.data;
+
+ for(let i=0;i<d.length;i+=4){
+
+  if(d[i]>strength && d[i+1]>strength && d[i+2]>strength){
+
+   d[i+3]=0;
+
+  }
+
+ }
+
+ ctx.putImageData(imgData,x,y);
+
+}
+
+
+function applyBW(ctx,x,y,w,h){
+
+ let imgData=ctx.getImageData(x,y,w,h);
+ let d=imgData.data;
+
+ for(let i=0;i<d.length;i+=4){
+
+  let g=(d[i]+d[i+1]+d[i+2])/3;
+
+  d[i]=g;
+  d[i+1]=g;
+  d[i+2]=g;
+
+ }
+
+ ctx.putImageData(imgData,x,y);
+
+}
+
+
+function adjust(ctx,x,y,w,h,bright,contrast){
+
+ let imgData=ctx.getImageData(x,y,w,h);
+ let d=imgData.data;
+
+ let factor=(259*(contrast+255))/(255*(259-contrast));
+
+ for(let i=0;i<d.length;i+=4){
+
+   d[i]=factor*(d[i]-128)+128+bright;
+   d[i+1]=factor*(d[i+1]-128)+128+bright;
+   d[i+2]=factor*(d[i+2]-128)+128+bright;
+
+ }
+
+ ctx.putImageData(imgData,x,y);
+
+}
+
+
+function generate(){
+
+ const defaultW=parseFloat(document.getElementById("defaultW").value);
+ const defaultH=parseFloat(document.getElementById("defaultH").value);
+
+ const space=mmToPx(parseFloat(document.getElementById("space").value));
+ const bgStrength=parseInt(document.getElementById("bg").value);
+ const bright=parseInt(document.getElementById("bright").value);
+ const contrast=parseInt(document.getElementById("contrast").value);
+
+ const paper=document.getElementById("paper").value;
+
+ let pw,ph;
+
+ if(paper==="a4"){pw=mmToPx(210);ph=mmToPx(297)}
+ if(paper==="a5"){pw=mmToPx(148);ph=mmToPx(210)}
+ if(paper==="letter"){pw=mmToPx(216);ph=mmToPx(279)}
+ if(paper==="4x6"){pw=mmToPx(152);ph=mmToPx(102)}
+ if(paper==="5x7"){pw=mmToPx(178);ph=mmToPx(127)}
+
+ const canvas=document.getElementById("canvas");
+ canvas.width=pw;
+ canvas.height=ph;
+
+ const ctx=canvas.getContext("2d");
+
+ ctx.fillStyle="white";
+ ctx.fillRect(0,0,pw,ph);
+
+ let x=space;
+ let y=space;
+ let rowHeight=0;
+
+ for(let i=0;i<images.length;i++){
+
+   const copies=parseInt(document.getElementById("copies_"+i).value) || 1;
+   const mode=document.getElementById("mode_"+i).value;
+
+   const wmm=parseFloat(document.getElementById("width_"+i).value) || defaultW;
+   const hmm=parseFloat(document.getElementById("height_"+i).value) || defaultH;
+
+   const w=mmToPx(wmm);
+   const h=mmToPx(hmm);
+
+   for(let c=0;c<copies;c++){
+
+     if(x+w>pw){
+       x=space;
+       y+=rowHeight+space;
+       rowHeight=0;
+     }
+
+     if(y+h>ph){
+       alert("Page full. Reduce copies or choose bigger paper.");
+       return;
+     }
+
+     ctx.drawImage(images[i],x,y,w,h);
+
+     removeBackground(ctx,x,y,w,h,bgStrength);
+     adjust(ctx,x,y,w,h,bright,contrast);
+
+     if(mode==="bw"){
+       applyBW(ctx,x,y,w,h);
+     }
+
+     x+=w+space;
+     if(h>rowHeight) rowHeight=h;
+
+   }
+
+ }
+
+}
+
+
+function downloadPNG(){
+
+ const canvas=document.getElementById("canvas");
+
+ const link=document.createElement("a");
+ link.download="photo_sheet.png";
+ link.href=canvas.toDataURL("image/png");
+
+ link.click();
+
+}
+
+
+function downloadPDF(){
+
+ const {jsPDF}=window.jspdf;
+
+ const canvas=document.getElementById("canvas");
+
+ const pdf=new jsPDF({
+  orientation: canvas.width>canvas.height?"landscape":"portrait",
+  unit:"px",
+  format:[canvas.width,canvas.height]
+ });
+
+ pdf.addImage(canvas.toDataURL("image/png"),"PNG",0,0,canvas.width,canvas.height);
+ pdf.save("photo_sheet.pdf");
+
+}
+
+</script>
+
+</body>
+</html>
